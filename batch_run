@@ -1,0 +1,29 @@
+#!/bin/bash
+
+if (( $# < 2 )); then
+    echo "$0 <eax|lk|lkh> <instances_list_file>"
+    exit
+elif echo $1 | grep -q -v -E "^(eax|lk|lkh)$"; then
+    echo "$0 <eax|lk|lkh> <instances_list_file>"
+    exit
+elif [ ! -f $2 ]; then
+    echo "$0 <eax|lk|lkh> <instances_list_file>"
+    exit
+fi
+
+SOLVER=$1
+INSLIST=`readlink -f $2`
+SCRIPT=`readlink -f $0`
+SCRIPTPATH=`dirname $SCRIPT`
+CURDIR=`pwd`
+cd $SCRIPTPATH
+
+CONFIGDIR=./config
+SOLVER_RUN=./${SOLVER}_run
+JOBS=`cat $CONFIGDIR/jobs`
+SEEDLIST=$CONFIGDIR/seeds
+
+parallel --linebuffer -j$JOBS --no-run-if-empty -a $INSLIST -a $SEEDLIST $SOLVER_RUN
+
+cd $CURDIR
+

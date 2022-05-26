@@ -1,0 +1,7 @@
+solvers/GA-for-TSP
+solvers/LKH-2.0.9
+solvers/concorde
+instances
+output/eax/*
+output/lk/*
+output/lkh/*

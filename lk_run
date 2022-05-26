@@ -1,0 +1,42 @@
+#!/bin/bash
+
+if (( $# < 2 )); then
+    echo "$0 <tsp_instance_file> <seed>"
+    exit
+fi
+
+INSTANCE=`readlink -f $1`
+SEED=$2
+SCRIPT=`readlink -f $0`
+SCRIPTPATH=`dirname $SCRIPT`
+CURDIR=`pwd`
+cd $SCRIPTPATH
+
+CONFIGDIR=./config
+RESDIR=./output/
+TIME_LIMIT=`cat $CONFIGDIR/time_limit`
+SOLVER_BIN=./solvers/lk
+
+INSNAME=`basename -s .tsp $INSTANCE`
+RESFILE=$RESDIR/lk/${INSNAME}_${TIME_LIMIT}.$SEED
+
+if [ ! -f $RESFILE ]; then
+    tmpres=`mktemp`
+
+    echo "Solving $INSTANCE with seed $SEED for $TIME_LIMIT seconds using LK ..."
+    $SOLVER_BIN -s $SEED -r 9999 $INSTANCE &> $tmpres &
+    PID=$!
+
+    sleep $TIME_LIMIT
+
+    kill $PID &> /dev/null
+    sleep 1
+    if ps -p $PID &> /dev/null; then
+        kill -9 $PID
+    fi
+
+    mv -f $tmpres $RESFILE
+fi
+
+cd $CURDIR
+
