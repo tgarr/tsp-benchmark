@@ -1,0 +1,197 @@
+#!/usr/bin/env python
+
+import sys
+import os
+import re
+import _pickle as cPickle
+import pickle
+import gc
+
+OUTDIR = "./output"
+EAXOUT = OUTDIR + "/eax"
+LKOUT = OUTDIR + "/lk"
+LKHOUT = OUTDIR + "/lkh"
+REGEX = re.compile("([0-9]*)_([0-9]*)_([0-9]*).([0-9]*)") # SIZE_SEQ_TIME.SEED
+
+DATADIR = "./data"
+SOLVEROUT = DATADIR + "/%s_raw.pickle"
+GENERALOUT = DATADIR + "/general_raw.pickle"
+
+def extract_lk():
+    data = {}
+
+    for fname in os.listdir(LKOUT):
+        matches = REGEX.findall(fname)
+        if len(matches) == 0: continue
+
+        sz, seq, t, seed = [int (i) for i in matches[0]]
+        
+        if sz not in data: data[sz] = {}
+        if t not in data[sz]: data[sz][t] = {}
+        if seq not in data[sz][t]: data[sz][t][seq] = {}
+        if "seeds" not in data[sz][t][seq]: 
+            data[sz][t][seq]["seeds"] = {}
+            data[sz][t][seq]["avg_time"] = 0
+            data[sz][t][seq]["best"] = sys.maxsize
+            data[sz][t][seq]["time_to_best"] = 0
+            data[sz][t][seq]["avg_best"] = sys.maxsize
+            data[sz][t][seq]["avg_time_to_best"] = 0
+
+        data[sz][t][seq]["seeds"][seed] = parse_lk(fname)
+        if data[sz][t][seq]["seeds"][seed]["best"] < data[sz][t][seq]["best"]:
+            data[sz][t][seq]["best"] = data[sz][t][seq]["seeds"][seed]["best"]
+            data[sz][t][seq]["time_to_best"] = data[sz][t][seq]["seeds"][seed]["time_to_best"]
+
+    post_lk(data)
+
+    return data
+
+def post_lk(data):
+    for sz in data:
+        for t in data[sz]:
+            for seq in data[sz][t]:
+                avgtime = 0
+                avgbestime = 0
+                avgbest = 0
+
+                count = 0
+                for seed in data[sz][t][seq]["seeds"]:
+                    avgtime += data[sz][t][seq]["seeds"][seed]["avg_time"]
+                    avgbestime += data[sz][t][seq]["seeds"][seed]["time_to_best"]
+                    avgbest += data[sz][t][seq]["seeds"][seed]["best"]
+                    count += 1
+
+                data[sz][t][seq]["avg_time"] = avgtime / float(count)
+                data[sz][t][seq]["avg_best"] = avgbest / float(count)
+                data[sz][t][seq]["avg_time_to_best"] = avgbestime / float(count)
+
+
+def parse_lk(fname):
+    with open(LKOUT + "/" + fname,"r") as f: raw = f.read()
+   
+    #  85 Steps   Best: 2123   0.05 seconds
+    lk_regex = re.compile(" *([0-9]*) Steps *Best: *([0-9]*) *([0-9\.]*) seconds")
+    matches = lk_regex.findall(raw)
+
+    runs = []
+    gbest = sys.maxsize
+    lasttime = 0
+    time_to_best = 0
+    acc_time = 0
+    for m in matches:
+        it = int(m[0])
+        best = int(m[1])
+        ttime = float(m[2])
+
+        if it == 0: 
+            runs.append([])
+            acc_time += lasttime
+
+        if best < gbest:
+            gbest = best
+            time_to_best = acc_time + ttime
+
+        runs[-1].append((best,ttime))
+        lasttime = ttime
+
+    avgtime = float(acc_time) / len(runs)
+    return {"runs": runs, "best": gbest, "avg_time": avgtime, "time_to_best": time_to_best}
+
+def write_solver(solver,data):
+    with open(SOLVEROUT % solver, "wb") as f:
+        cPickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+    
+def write_general(data):
+    with open(GENERALOUT, "wb") as f:
+        cPickle.dump(data["general"], f, protocol=pickle.HIGHEST_PROTOCOL)
+
+def general_summary(data):
+    data["general"] = {}
+
+    sizes = []
+    times = []
+    seqs = []
+    seeds = []
+    best = {}
+    lower_bound = {}
+
+    data["general"]["sizes"] = sizes
+    data["general"]["times"] = times
+    data["general"]["seqs"] = seqs
+    data["general"]["seeds"] = seeds
+    data["general"]["best"] = best
+    data["general"]["lower_bound"] = lower_bound
+
+    for solver in ["lk","eax","lkh"]:
+        for sz in data[solver]:
+            if sz not in sizes: sizes.append(sz)
+            for t in data[solver][sz]:
+                if t not in times: times.append(t)
+                for seq in data[solver][sz][t]:
+                    if seq not in seqs: seqs.append(seq)
+                    for seed in data[solver][sz][t][seq]["seeds"]:
+                        if seed not in seeds: seeds.append(seed)
+
+    for sz in sizes:
+        for t in times:
+            for seq in seqs:
+                bestvalue = sys.maxsize
+                besttime = 0
+                bestsolver = 0
+                for solver in ["lk","eax","lkh"]:
+                    try:
+                        if data[solver][sz][t][seq]["best"] < bestvalue:
+                            bestvalue = data[solver][sz][t][seq]["best"]
+                            besttime = data[solver][sz][t][seq]["time_to_best"]
+                            bestsolver = solver
+                    except:
+                        pass
+                if bestsolver != 0:
+                   best[sz,t,seq] = (bestvalue,besttime,bestsolver)
+
+    # TODO lower bound from lkh
+
+
+def extract_eax():
+    return {}
+
+def extract_lkh():
+    return {}
+
+def free_solver(data):
+    for sz in data:
+        for t in data[sz]:
+            for seq in data[sz][t]:
+                for seed in data[sz][t][seq]["seeds"]:
+                    del data[sz][t][seq]["seeds"][seed]["runs"]
+                    data[sz][t][seq]["seeds"][seed]["runs"] = []
+    gc.collect()
+
+def main(argv):
+    # change to correct path
+    os.chdir(os.path.dirname(argv[0]))
+
+    data = {}
+
+    # lk
+    data["lk"] = extract_lk()
+    write_solver("lk",data["lk"])
+    free_solver(data["lk"])
+
+    # lkh
+    data["lkh"] = extract_lkh()
+    write_solver("lkh",data["lkh"])
+    free_solver(data["lkh"])
+
+    # eax
+    data["eax"] = extract_eax()
+    write_solver("eax",data["eax"])
+    free_solver(data["eax"])
+
+    # general
+    general_summary(data)
+    write_general(data)
+
+if __name__ == "__main__":
+    main(sys.argv)
+
